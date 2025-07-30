@@ -10,7 +10,9 @@ import numpy as np
 from graphviz import Source
 import subprocess
 from typing import List, Dict, Tuple, Union
+from tqdm import tqdm
 
+GEN_SUM = 10000
 # 配置目录
 chem_dir = "/llm/datasets/OCRSets/CASIA-CSDB"
 chem_dir_txt = "/llm/wyr/projects/any-text/image_paths_with_labels.txt"
@@ -22,6 +24,9 @@ latex_json = "/llm/datasets/OCRSets/im2latex/im2latex.json"
 scores_dir = "/llm/wyr/projects/any-text/scores"
 scores_txt = "/llm/wyr/projects/any-text/scores_paths_with_length.txt"
 chart_txt = "/llm/wyr/projects/any-text/chart_paths.txt"
+chart_image_dir = "/llm/datasets/ChartGalaxy/source"
+chart_json = "/llm/datasets/ChartGalaxy/output/chart_caption_async/all_chart_captions.json"
+output_dir = "/llm/wyr/projects/any-text/output"
 MAX_LENGTH = 3600  # 最大尺寸限制
 
 # 文本布局基础参数（图像适应相关参数）
@@ -73,6 +78,8 @@ word-wrap: break-word;
 white-space: normal;
 box-sizing: border-box;
 z-index: 1;
+display: flex;
+align-items: center;
 }}
 
 .{class_name}::before {{
@@ -95,7 +102,7 @@ z-index: -1;
 LOCAL_FONT_DIR = "./fonts"
 
 # 辅助函数
-def gen_dot_image(dot_image_num):
+def gen_dot(type, dot_image_num):
     path_texts = []
     for i in range(dot_image_num):
         try:
@@ -104,69 +111,72 @@ def gen_dot_image(dot_image_num):
             src = Source(dot_str)
             src.format = "png"
             path = f"/llm/wyr/projects/any-text/dots/dot_preview_{i}"
-            path_texts.append({"path":path+".png", "text":dot_str})
+            path_texts.append({"path":path+".png", "text":dot_str, "type":type})
             src.render(filename=path, cleanup=True)
         except Exception as e:
             print(f"生成dot图像出错: {e}")
     return path_texts
 
-def gen_scores_image(scores_image_num):
+def gen_scores(type, scores_image_num):
     path_texts = []
     for i in range(scores_image_num):
         try:
             subprocess.run(["bash", "scores.sh", str(i)], check=True, timeout=10)
             with open(f"{scores_dir}/scores_{i}.txt", "r") as f:
                 scores_str = f.read()
-                path_texts.append({"path":f"{scores_dir}/scores_{i}.png", "text":scores_str})
+                path_texts.append({"path":f"{scores_dir}/scores_{i}.png", "text":scores_str, "type":type})
         except Exception as e:
             print(f"生成scores图像出错: {e}")
     return path_texts
 
-def get_random_image_from_txt(txt_file, num_images):
+def get_all_chem(type, txt_file):
     path_texts = []
     try:
         with open(txt_file, 'r', encoding='utf-8') as f:
             image_paths = f.readlines()
-            if len(image_paths) < num_images:
-                num_images = len(image_paths)
-            samples = random.sample(image_paths, num_images)
-            for s in samples:
+            for s in image_paths:
                 parts = s.split("###")
                 if len(parts) >= 2:
-                    path_texts.append({"path":parts[0], "text":parts[1]})
+                    path_texts.append({"path":parts[0], "text":parts[1], "type":type})
     except Exception as e:
         print(f"从文本文件获取图像出错: {e}")
     return path_texts
 
-def get_random_image_from_json(json_file, num_images):
+def get_all_latex(type, json_file):
     path_texts = []
     try:
         with open(json_file, 'r', encoding='utf-8') as f:
             json_data = json.load(f)
-            if len(json_data) < num_images:
-                num_images = len(json_data)
-            samples = random.sample(json_data, num_images)
-            for s in samples:
-                path_texts.append({"path":os.path.join(latex_image_dir, s["image_name"]), "text":s["text"]})
+            for s in json_data:
+                path_texts.append({"path":os.path.join(latex_image_dir, s["image_name"]), "text":s["text"], "type":type})
     except Exception as e:
         print(f"从JSON文件获取图像出错: {e}")
     return path_texts
 
-def get_random_texts_from_txt(wiki_dir_txt, num_texts):
+def get_all_chart(type, json_file):
+    path_texts = []
+    try:
+        with open(json_file, 'r', encoding='utf-8') as f:
+            json_data = json.load(f)
+            for s in json_data:
+                path_texts.append({"path":os.path.join(chart_image_dir, s["data_json_path"].replace(".data.json", ".png")), "text":s["description"], "type":type})
+    except Exception as e:
+        print(f"从JSON文件获取图像出错: {e}")
+    return path_texts
+
+def get_all_wiki(wiki_dir_txt):
     text_samples = []
     try:
         with open(wiki_dir_txt, 'r', encoding='utf-8') as f:
             wiki_paths = f.readlines()
-            if len(wiki_paths) < num_texts:
-                num_texts = len(wiki_paths)
-            samples = random.sample(wiki_paths, num_texts)
-            for path in samples:
+            for path in wiki_paths:
                 try:
                     with open(path.strip('\n'), 'r', encoding='utf-8') as json_file:
                         data = json.load(json_file)
                         long_texts = [t for t in data if len(t['text'])>100]
                         if long_texts:
-                            text_samples.append(random.choice(long_texts)['text'])
+                            lang = "zh" if "zh" in path else "en"
+                            text_samples.append({"text": random.choice(long_texts)['text'], "lang": lang})
                 except Exception as e:
                     print(f"读取文本文件出错 {path}: {e}")
     except Exception as e:
@@ -296,7 +306,7 @@ def gen_compact_layout(elements: List[Dict]) -> Tuple[List[Dict], Tuple[int, int
             if key not in dp or value['area'] > dp[key]['area']:
                 dp[key] = value
 
-    # # 4. 找到最优布局（最大面积利用率 + 最小总尺寸 + 宽高更接近）
+    # 4. 找到最优布局（最大面积利用率 + 最小总尺寸 + 宽高更接近）
     best_state = None
     min_total_size = float('inf')
     min_aspect_diff = float('inf')
@@ -317,7 +327,7 @@ def gen_compact_layout(elements: List[Dict]) -> Tuple[List[Dict], Tuple[int, int
             min_aspect_diff = current_diff
 
     if not best_state:
-        return [], (0, 0)
+        return [], (0, 0), []
 
     # 5. 行分组与垂直居中（基于最终布局）
     layout = []
@@ -340,42 +350,155 @@ def gen_compact_layout(elements: List[Dict]) -> Tuple[List[Dict], Tuple[int, int
                     break
             if not overlap:
                 break
-        
-        layout.append({
-            'id': elem['id'],
-            'type': elem['type'],
-            'path': elem['path'],
-            'text': elem['text'],
-            'position': (x, y),
-            'size': (w, h)
-        })
+        if elem['type'] == "text":
+            layout.append({
+                'id': elem['id'],
+                'type': "text",
+                'path': elem['path'],
+                'text': elem['text'],
+                'position': (x, y),
+                'size': (w, h),
+                'lang': elem['lang']
+            })
+        else:
+            layout.append({
+                'id': elem['id'],
+                'type': elem['type'],
+                'path': elem['path'],
+                'text': elem['text'],
+                'position': (x, y),
+                'size': (w, h)
+            })
         occupied_regions.append((x, y, w, h))
 
-    # 行分组（确保行边界精准）
+    # 行分组（记录min_left、max_right、min_top、max_bottom）
     rows = []
     for elem in layout:
         x, y = elem['position']
         w, h = elem['size']
         elem_top = y
         elem_bottom = y + h
+        elem_left = x
+        elem_right = x + w
         
         placed = False
         for i, row in enumerate(rows):
-            # 更严格的垂直重叠判断
             if (elem_top < row['max_bottom'] and elem_bottom > row['min_top']):
                 rows[i]['elements'].append(elem)
                 rows[i]['min_top'] = min(row['min_top'], elem_top)
                 rows[i]['max_bottom'] = max(row['max_bottom'], elem_bottom)
+                rows[i]['min_left'] = min(row['min_left'], elem_left)  # 行最左x
+                rows[i]['max_right'] = max(row['max_right'], elem_right)  # 行最右x+宽度
                 placed = True
                 break
         if not placed:
             rows.append({
                 'elements': [elem],
                 'min_top': elem_top,
-                'max_bottom': elem_bottom
+                'max_bottom': elem_bottom,
+                'min_left': elem_left,
+                'max_right': elem_right
             })
 
-    # 行内垂直居中调整（原有逻辑保留）
+    # 计算行内元素的分配宽度（修复行尾间距和负空间问题）
+    for row in rows:
+        elements_sorted = sorted(row['elements'], key=lambda e: e['position'][0])
+        row_min_left = row['min_left']
+        row_max_right = row['max_right']
+        row_available_width = row_max_right - row_min_left  # 行实际可用宽度
+        element_count = len(elements_sorted)
+        
+        if element_count <= 1:
+            for elem in elements_sorted:
+                elem['allocated_width'] = row_available_width
+                elem['row_min_left'] = row_min_left
+            continue
+        
+        # 计算间距和额外空间（确保非负）
+        total_spacing = (element_count - 1) * MIN_SPACING  # 仅元素间的间距
+        total_element_width = sum(elem['size'][0] for elem in elements_sorted)
+        extra_space = row_available_width - total_element_width - total_spacing
+        extra_space = max(0, extra_space)  # 避免负空间
+        space_per_element = extra_space / element_count if element_count > 0 else 0
+        
+        # 分配宽度并记录相对位置（最后一个元素后无间距）
+        current_relative_x = 0
+        for i, elem in enumerate(elements_sorted):
+            elem_width = elem['size'][0]
+            allocated_width = elem_width + space_per_element
+            elem['allocated_width'] = allocated_width
+            elem['row_min_left'] = row_min_left
+            elem['row_relative_x'] = current_relative_x
+            
+            # 最后一个元素后不加间距
+            if i < element_count - 1:
+                current_relative_x += allocated_width + MIN_SPACING
+            else:
+                current_relative_x += allocated_width
+
+    # 计算行内元素的分配宽度（基于行可用宽度：max_right - min_left）
+    for row in rows:
+        elements_sorted = sorted(row['elements'], key=lambda e: e['position'][0])
+        row_min_left = row['min_left']
+        row_max_right = row['max_right']
+        row_available_width = row_max_right - row_min_left  # 行的实际可用宽度
+        element_count = len(elements_sorted)
+        
+        if element_count <= 1:
+            for elem in elements_sorted:
+                elem['allocated_width'] = row_available_width
+                elem['row_min_left'] = row_min_left  # 记录行的min_left
+            continue
+        
+        # 计算间距和额外空间
+        total_spacing = (element_count - 1) * MIN_SPACING
+        total_element_width = sum(elem['size'][0] for elem in elements_sorted)
+        extra_space = row_available_width - total_element_width - total_spacing
+        space_per_element = extra_space / element_count if element_count > 0 else 0
+        
+        # 分配宽度并记录相对位置
+        current_relative_x = 0
+        for i, elem in enumerate(elements_sorted):
+            elem_width = elem['size'][0]
+            allocated_width = elem_width + space_per_element
+            elem['allocated_width'] = allocated_width
+            elem['row_min_left'] = row_min_left  # 记录行的min_left
+            elem['row_relative_x'] = current_relative_x  # 记录行内相对x
+            current_relative_x += allocated_width + MIN_SPACING
+
+    # 计算每行中每个元素的分配宽度（用于居中）
+    for row in rows:
+        elements_sorted = sorted(row['elements'], key=lambda e: e['position'][0])
+        row_width = row['max_right']
+        element_count = len(elements_sorted)
+        
+        if element_count <= 1:
+            # 单行只有一个元素，整个行宽都分配给它
+            for elem in elements_sorted:
+                elem['allocated_width'] = row_width
+            continue
+        
+        # 计算总间距
+        total_spacing = (element_count - 1) * MIN_SPACING
+        # 计算所有元素总宽度
+        total_element_width = sum(elem['size'][0] for elem in elements_sorted)
+        # 计算可分配的额外空间
+        extra_space = row_width - total_element_width - total_spacing
+        # 每个元素可分配的额外空间
+        space_per_element = extra_space / element_count if element_count > 0 else 0
+        
+        # 为每个元素设置分配宽度
+        current_x = 0
+        for i, elem in enumerate(elements_sorted):
+            elem_width = elem['size'][0]
+            # 分配宽度 = 元素宽度 + 平均额外空间
+            allocated_width = elem_width + space_per_element
+            elem['allocated_width'] = allocated_width
+            # 记录元素在该行中的相对位置（用于居中计算）
+            elem['row_relative_x'] = current_x
+            current_x += allocated_width + MIN_SPACING
+
+    # 行内垂直居中调整
     adjusted_layout = []
     for row in rows:
         row_height = row['max_bottom'] - row['min_top']
@@ -393,81 +516,65 @@ def gen_compact_layout(elements: List[Dict]) -> Tuple[List[Dict], Tuple[int, int
     return adjusted_layout, (total_width, total_height), rows
 
 
-def get_text_dimensions(text: str, image_features=None) -> Tuple[int, int]:
-    """
-    计算更紧凑的文本块尺寸，减少留白并适应整体布局
-    
-    参数:
-        text: 文本内容
-        image_features: 可选，图像特征字典，用于协调文本与图像尺寸
-    """
+def get_text_dimensions(lang:str, text: str) -> Tuple[int, int]:
     text_length = len(text)
     if text_length == 0:
         return (150, 80)  # 空文本默认最小尺寸
+
+    contains_chinese = (lang=="zh")
     
-    # 1. 基础参数：使用更小的字符间距和更紧凑的行高
-    base_char_width = 7.5  # 字符宽度（比之前更小）
-    base_line_height = 1.2  # 行高倍数（更紧凑）
-    min_font_size = 12
-    max_font_size = 18
-    
-    # 2. 根据文本长度动态调整字体大小（长文本用小字体，短文本用大字体）
-    if text_length < 50:
-        font_size = max_font_size  # 短文本用较大字体
-        chars_per_line = 15  # 每行字符少，宽度窄
-    elif text_length < 200:
-        font_size = int((max_font_size - min_font_size) * 0.7 + min_font_size)
-        chars_per_line = 25
+    # 基础参数：中文/英文差异化配置
+    if contains_chinese:
+        base_char_width = 9.0   # 中文字符更宽
+        min_font_size = 24
+        max_font_size = 34
+        chars_per_line = 12 if text_length < 50 else 20  # 中文每行字符更少
     else:
-        font_size = min_font_size  # 长文本用较小字体
-        chars_per_line = 35  # 每行字符多，宽度适中
+        base_char_width = 7.5   # 英文字符
+        min_font_size = 12     
+        max_font_size = 24
+        chars_per_line = 15 if text_length < 50 else 25  # 英文每行字符更多
     
-    # 3. 精确计算行数和基础尺寸（减少冗余空间）
+    base_line_height = 1.2  # 行高倍数（统一）
+
+    # # 动态调整字体大小（短文本大字号，长文本小字号）
+    # if text_length < 50:
+    #     font_size = max_font_size
+    # elif text_length < 200:
+    #     font_size = int((max_font_size - min_font_size) * 0.7 + min_font_size)
+    # else:
+    #     font_size = min_font_size
+    font_size = max_font_size
+
+    # 计算内容宽高
     lines = max(1, (text_length + chars_per_line - 1) // chars_per_line)
     content_width = chars_per_line * base_char_width * (font_size / 14)  # 字体大小修正
     content_height = lines * font_size * base_line_height
-    
-    # 4. 添加必要的内边距（最小化留白）
-    padding_x = 10  # 水平内边距（比之前小）
-    padding_y = 8   # 垂直内边距（比之前小）
+
+    # 内边距（最小化留白）
+    padding_x = 10
+    padding_y = 8
     final_width = int(content_width + padding_x * 2)
     final_height = int(content_height + padding_y * 2)
-    
-    # 5. 与图像尺寸协调（如果提供了图像特征）
-    if image_features:
-        # 文本宽度不超过图像平均宽度的1.2倍
-        if final_width > image_features.get('avg_width', 400) * 1.2:
-            final_width = int(image_features['avg_width'] * 1.2)
-            # 按新宽度重新计算每行字符数和行数
-            adjusted_chars = int((final_width - padding_x * 2) / (base_char_width * (font_size / 14)))
-            if adjusted_chars > 0:
-                lines = max(1, (text_length + adjusted_chars - 1) // adjusted_chars)
-                final_height = int(lines * font_size * base_line_height + padding_y * 2)
-        
-        # 确保文本高度不小于图像平均高度的1/3（避免过矮）
-        min_height = max(final_height, int(image_features.get('avg_height', 300) * 0.3))
-        final_height = min_height
-    
-    # 6. 设置最小尺寸限制（避免过小难以阅读）
-    final_width = max(final_width, 120)  # 最小宽度
-    final_height = max(final_height, 60)  # 最小高度
-    
+
+    # 最小尺寸限制
+    final_width = max(final_width, 120)
+    final_height = max(final_height, 60)
+
     return (final_width, final_height)
 
 
 # 生成HTML布局
-def generate_dynamic_layout(images_and_texts, total_width, total_height, rows):
+def generate_dynamic_layout(total_width, total_height, rows):
     container_style = (
         f"position: relative; width: {total_width}px; height: {total_height}px; "
         f"margin: 0; padding: 0; box-sizing: border-box; background: #fff;"
     )
     flow_html = f'<div class="flow-container" style="{container_style}">'
 
-    # 1. 绘制行横线（严格分割行，基于上一行最大 bottom）
+    # 1. 绘制行横线（分割行）
     for i in range(1, len(rows)):
         prev_row = rows[i-1]
-        curr_row = rows[i]
-        # 修复：行线位于上一行所有元素的最大 bottom
         prev_row_max_bottom = max(
             elem['position'][1] + elem['size'][1] 
             for elem in prev_row['elements']
@@ -481,87 +588,117 @@ def generate_dynamic_layout(images_and_texts, total_width, total_height, rows):
             "></div>
         '''
 
-    # 2. 绘制列竖线（覆盖行内所有元素的垂直范围）
-    for row in rows:
-        elements = row['elements']
-        if len(elements) <= 1:
-            continue  
-
-        elements_sorted = sorted(elements, key=lambda e: e['position'][0])
-        # 修复：取行内所有元素的最小 top 和最大 bottom
-        row_min_top = min(elem['position'][1] for elem in elements)
-        row_max_bottom = max(elem['position'][1] + elem['size'][1] for elem in elements)
-        row_min_top = int(row_min_top)
-        row_max_bottom = int(row_max_bottom)
-
-        for j in range(1, len(elements_sorted)):
-            prev_elem = elements_sorted[j-1]
-            curr_elem = elements_sorted[j]
-            prev_right = prev_elem['position'][0] + prev_elem['size'][0]
-            curr_left = curr_elem['position'][0]
-            line_x = int((prev_right + curr_left) / 2)  # 强制整数
-
-            flow_html += f'''
-                <div class="column-line" style="
-                    position: absolute; 
-                    top: {row_min_top}px;
-                    height: {row_max_bottom - row_min_top}px;
-                    left: {line_x}px; 
-                    width: 2px; 
-                    background: #000000; 
-                    z-index: 9999; 
-                "></div>
-            '''
-
     css_styles = []
     out_put_labels = ""
-    # 3. 渲染元素（强制整数像素，避免亚像素错位）
-    for item in images_and_texts:
-        x, y = item["position"]
-        w, h = item["size"]
-        x, y, w, h = map(int, (x, y, w, h))  # 关键修复！
-        item_style = (
-            f"position: absolute; left: {x}px; top: {y}px; "
-            f"width: {w}px; height: {h}px; margin: 0; padding: 0; "
-            f"box-sizing: border-box; overflow: visible; "
-            f"z-index: 999;"
-        )
 
-        if item["type"] == "image":
-            flow_html += f'''
-                <div class="flow-item" style="{item_style}">
-                    <img src="{image_to_data_uri(item['path'])}" 
-                         style="width: 100%; height: 100%; object-fit: contain;">
-                </div>
-            '''
-            out_put_labels += f"{item['text']}\n"
+    # 2. 行内元素：可变间隔排列 + 动态列竖线
+    row_index = 1
+    for row in rows:
+        elements = row['elements']
+        if not elements:
+            continue
+        
+        # 按原始顺序排序（确保从左到右）
+        elements_sorted = sorted(elements, key=lambda e: e['position'][0])
+        element_count = len(elements_sorted)
+        row_min_top = min(elem['position'][1] for elem in elements_sorted)
+        row_max_bottom = max(elem['position'][1] + elem['size'][1] for elem in elements_sorted)
+        row_height = row_max_bottom - row_min_top  # 行高（用于竖线高度）
+
+        # 计算可变间隔
+        total_element_width = sum(elem['size'][0] for elem in elements_sorted)
+        if element_count <= 1:
+            # 单个元素：左右间隔相等
+            total_gap_space = total_width - total_element_width
+            side_gap = total_gap_space / 2 if total_gap_space > 0 else 0
+            gaps = [side_gap]  # 仅左右间隔（中间无间隔）
         else:
-            class_name = f"text-style-{item['id']}"
-            font_size = min(24, max(12, int(w / (len(item["text"]) // 5 + 1))))
-            text_css, _ = random_css_font_style(class_name, font_size)
-            text = item["text"].replace("\n", "<br>")
-            flow_html += f'''
-                <style>{text_css}</style>
-                <div class="flow-item" style="{item_style}">
-                    <div class="{class_name}" style="width: 100%; height: 100%; overflow-y: auto;">
-                        {text}
-                    </div>
-                </div>
-            '''
-            css_styles.append(text_css)
-            out_put_labels += f"{item['text']}\n"
+            # 多个元素：左右间隔 + 元素间间隔（总间隔空间平均分配）
+            total_gap_space = total_width - total_element_width
+            total_gap_space = max(0, total_gap_space)  # 避免负空间
+            gap_count = element_count + 1  # 左右2个 + 中间(n-1)个 = n+1个间隔
+            base_gap = total_gap_space / gap_count if gap_count > 0 else 0
+            gaps = [base_gap] * gap_count  # 所有间隔平均分配
 
+        # 计算元素位置（整体水平居中，间隔可变）
+        element_positions = []  # 存储每个元素的(left, right)
+        current_left = gaps[0]  # 左边界起始位置（第一个间隔）
+        for i, elem in enumerate(elements_sorted):
+            w = elem['size'][0]
+            element_left = current_left
+            element_right = element_left + w
+            element_positions.append((element_left, element_right))
+            
+            # 更新下一个元素的起始位置（当前元素宽度 + 下一个间隔）
+            if i < element_count - 1:
+                current_left = element_right + gaps[i+1]
+
+        # 3. 绘制列竖线（基于元素实际位置）
+        if element_count > 1:
+            for i in range(element_count - 1):
+                # 竖线位置 = 前一个元素右边界 + 中间间隔的一半
+                prev_right = element_positions[i][1]
+                next_left = element_positions[i+1][0]
+                gap_between = next_left - prev_right
+                line_x = prev_right + gap_between / 2  # 间隔中心
+                line_x = int(line_x)  # 整数像素避免模糊
+
+                flow_html += f'''
+                    <div class="column-line" style="
+                        position: absolute; 
+                        top: {int(row_min_top)}px;
+                        height: {int(row_height)}px;
+                        left: {line_x}px; 
+                        width: 2px; 
+                        background: #000000; 
+                        z-index: 9999; 
+                    "></div>
+                '''
+        line_index = 1
+        # 4. 渲染元素（应用可变间隔位置）
+        for idx, elem in enumerate(elements_sorted):
+
+            w, h = elem['size']
+            y = elem['position'][1]
+            x = element_positions[idx][0]  # 使用计算出的left位置
+            x, y, w, h = map(int, (x, y, w, h))
+
+            item_style = (
+                f"position: absolute; left: {x}px; top: {y}px; "
+                f"width: {w}px; height: {h}px; margin: 0; padding: 0; "
+                f"box-sizing: border-box; overflow: visible; "
+                f"z-index: 999;"
+            )
+
+            # 渲染图片或文本
+            if elem["type"] == "text":
+                class_name = f"text-style-{elem['id']}"
+                text_css, _ = random_css_font_style(elem["lang"], class_name)
+                text = elem["text"]
+                flow_html += f'''
+                    <style>{text_css}</style>
+                    <div class="flow-item" style="{item_style}">
+                        <div class="{class_name}" style="width: 100%; height: 100%; overflow-y: auto;">
+                            {text}
+                        </div>
+                    </div>
+                '''
+                css_styles.append(text_css)
+                out_put_labels += f"第{row_index}行，第{line_index}个元素：带背景的文本：\n{elem['text']}\n\n\n"
+            else:
+                flow_html += f'''
+                    <div class="flow-item" style="{item_style}">
+                        <img src="{image_to_data_uri(elem['path'])}" 
+                             style="width: 100%; height: 100%; object-fit: contain;">
+                    </div>
+                '''
+                out_put_labels += f"第{row_index}行，第{line_index}个元素：{elem['type']}:\n {elem['text']}\n\n\n"
+
+            line_index += 1
+        row_index += 1
     flow_html += '</div>'
 
-    try:
-        with open("/llm/wyr/projects/any-text/out_put_labels.txt", "w") as f:
-            f.write(out_put_labels)
-    except Exception as e:
-        print(f"保存标签文件出错: {e}")
-
-    # html_content = HTML_TEMPLATE.format(styles='\n'.join(css_styles), content=flow_html)
-    # return html_content
-    return flow_html
+    return flow_html, out_put_labels
 
 # 图片转URI（保持不变）
 def image_to_data_uri(filepath):
@@ -591,11 +728,12 @@ def rand_color(alpha=True):
     else:
         return f"rgb({r},{g},{b})"
 
-def get_random_local_font():
+def get_random_local_font(lang:str):
     try:
+        local_font_dir = os.path.join(LOCAL_FONT_DIR, lang)
         font_files = []
-        if os.path.exists(LOCAL_FONT_DIR):
-            for root, _, files in os.walk(LOCAL_FONT_DIR):
+        if os.path.exists(local_font_dir):
+            for root, _, files in os.walk(local_font_dir):
                 for file in files:
                     if file.lower().endswith((".ttf", ".otf", ".ttc", ".woff", ".woff2")):
                         font_files.append(os.path.join(root, file))
@@ -607,8 +745,8 @@ def get_random_local_font():
         print(f"获取本地字体出错: {e}")
     return None, None
 
-def random_css_font_style(class_name, font_size=None):
-    local_font_name, local_font_path = get_random_local_font()
+def random_css_font_style(lang, class_name, font_size=None):
+    local_font_name, local_font_path = get_random_local_font(lang)
     if local_font_name and local_font_path:
         font_family = local_font_name
         font_face_css = (
@@ -630,9 +768,11 @@ def random_css_font_style(class_name, font_size=None):
         print(f"获取背景图片出错: {e}")
 
     if font_size is None:
-        font_size = f"{random.randint(14, 22)}px"
-    else:
-        font_size = f"{font_size}px"
+        if lang == "zh":
+            font_size = random.randint(20, 26)
+        else:
+            font_size = random.randint(12, 18)
+    font_size = f"{font_size}px"
 
     css_params = {
         "class_name": class_name,
@@ -727,46 +867,67 @@ def get_random_background_image(directory):
         print(f"获取背景图片出错: {e}")
     return None
 
-# 生成PNG入口
-def generate_png_with_dynamic_layout(images_and_texts, output_file="output.png", width=MAX_LENGTH, height=MAX_LENGTH):
-    try:
-        html_content = generate_dynamic_layout(images_and_texts, width, height)
-        print(f"生成PNG文件: {output_file}")
-        png_file = asyncio.run(html_to_png(html_content, output_file, width, height))
-        return png_file
-    except Exception as e:
-        print(f"生成PNG过程出错: {e}")
-        return None
-
 if __name__ == "__main__":
-    try:
-        # 获取各类图像
-        chem_image_num = 1
-        chem_images_texts = get_random_image_from_txt(chem_dir_txt, chem_image_num)
+    # 获取各类图像
+    all_chem_images_texts = get_all_chem("化学分子式", chem_dir_txt)
+    random.shuffle(all_chem_images_texts)
+    cur_chem_index = 0
+    chem_length = len(all_chem_images_texts)
+
+    
+    all_latex_images_texts = get_all_latex("公式",latex_json)
+    random.shuffle(all_latex_images_texts)
+    cur_latex_index = 0
+    latex_length = len(all_latex_images_texts)
+
+    all_chart_images_texts = get_all_chart("图表", chart_json)
+    random.shuffle(all_chart_images_texts)
+    cur_chart_index = 0
+    chart_length = len(all_chart_images_texts)
+
+    all_wiki_texts = get_all_wiki(wiki_dir_txt)
+    random.shuffle(all_wiki_texts)
+    cur_wiki_index = 0
+    wiki_length = len(all_wiki_texts)
+
+    output_labels = []
+
+    for i in tqdm(range(GEN_SUM)):
+        chem_image_num = random.randint(1, 2)
+        cur_chem_index = cur_chem_index % chem_length
+        chem_images_texts = all_chem_images_texts[cur_chem_index:min(cur_chem_index+chem_image_num, chem_length)]
+        cur_chem_index += chem_image_num
         print(f"化学图像数量: {len(chem_images_texts)}")
 
         dot_image_num = random.randint(1, 2)
-        dot_images_texts = gen_dot_image(dot_image_num)
+        dot_images_texts = gen_dot("graph", dot_image_num)
         print(f"Dot图像数量: {len(dot_images_texts)}")
 
         latex_image_num = random.randint(1, 2)
-        latex_images = get_random_image_from_json(latex_json, latex_image_num)
-        print(f"LaTeX图像数量: {len(latex_images)}")
+        cur_latex_index = cur_latex_index % latex_length
+        latex_images_texts = all_latex_images_texts[cur_latex_index:min(cur_latex_index+latex_image_num, latex_length)]
+        cur_latex_index += latex_image_num
+        print(f"LaTeX图像数量: {len(latex_images_texts)}")
+
 
         chart_image_num = random.randint(1, 2)
-        chart_images = get_random_image_from_txt(chart_txt, chart_image_num)
-        print(f"图表数量: {len(chart_images)}")
+        cur_chart_index = cur_chart_index % chart_length
+        chart_images_texts = all_chart_images_texts[cur_chart_index:min(cur_chart_index+chart_image_num, chart_length)]
+        cur_chart_index += chart_image_num
+        print(f"图表数量: {len(chart_images_texts)}")
 
         scores_image_num = random.randint(1, 2)
-        scores_images = gen_scores_image(scores_image_num)
-        print(f"分数图像数量: {len(scores_images)}")
+        scores_images_texts = gen_scores("五线谱", scores_image_num)
+        print(f"五线谱图像数量: {len(scores_images_texts)}")
 
-        random_images = chem_images_texts + dot_images_texts + latex_images + chart_images + scores_images
+        random_images = chem_images_texts + dot_images_texts + latex_images_texts + chart_images_texts + scores_images_texts
         print(f"总图像数量: {len(random_images)}")
         
         # 获取文本
         num_texts = random.randint(2, 4)
-        random_texts = get_random_texts_from_txt(wiki_dir_txt, num_texts)
+        cur_wiki_index = cur_wiki_index % wiki_length
+        random_texts = all_wiki_texts[cur_wiki_index:min(cur_wiki_index+num_texts, wiki_length)]
+        cur_wiki_index += num_texts
         print(f"文本数量: {len(random_texts)}")
 
         # 构建元素列表
@@ -775,7 +936,7 @@ if __name__ == "__main__":
             w, h = get_image_dimensions(img['path'])
             elements.append({
                 'id': i,
-                'type': 'image',
+                'type': img['type'],
                 'path': img['path'],
                 'width': w,
                 'height': h,
@@ -783,9 +944,9 @@ if __name__ == "__main__":
                 'text': img.get('text', '')
             })
 
-        for i, text in enumerate(random_texts):
+        for i, item in enumerate(random_texts):
             # 这里可优化文本尺寸，让文本更紧凑
-            w, h = get_text_dimensions(text)  # 建议修改文本尺寸算法
+            w, h = get_text_dimensions(item["lang"], item["text"])  # 建议修改文本尺寸算法
             elements.append({
                 'id': i + len(random_images),
                 'type': 'text',
@@ -793,7 +954,8 @@ if __name__ == "__main__":
                 'width': w,
                 'height': h,
                 'area': w * h,
-                'text': text
+                'text': item["text"],
+                'lang':item["lang"]
             })
 
         # 生成紧凑布局（获取 rows）
@@ -801,9 +963,12 @@ if __name__ == "__main__":
         print(f"行数: {len(rows)}")
 
         # 生成动态布局（传递 rows）
-        output_file = os.path.abspath("/llm/wyr/projects/any-text/sample_output.png")
-        html_content = generate_dynamic_layout(layout, total_width, total_height, rows)
+        output_file = os.path.abspath(f"{output_dir}/images/{i}.png")
+        html_content, out_put_label = generate_dynamic_layout(total_width, total_height, rows)
+
         png_file = asyncio.run(html_to_png(html_content, output_file, total_width, total_height))
         print("save png file to ", output_file)
-    except Exception as e:
-        print(f"主程序出错: {e}")
+        output_labels.append({"image":output_file, "labels":out_put_label})
+    
+        with open(f"{output_dir}/output_labels.json", "w") as f:
+            json.dump(output_labels, f)
