@@ -37,7 +37,7 @@ def save_image_paths_with_labels(base_directory, output_file):
                             f.write(f"{image_path}###{label}\n")  # 写入图像路径和标注
 
 if __name__ == "__main__":
-    base_directory = "/llm/datasets/OCRSets/CASIA-CSDB/CASIA-CSDB"  # 替换为你的基础目录
-    output_txt_file = "/llm/wyr/projects/any-text/image_paths_with_labels.txt"  # 输出的文本文件名
+    base_directory = "CASIA-CSDB/CASIA-CSDB"  # 替换为你的基础目录
+    output_txt_file = "image_paths_with_labels.txt"  # 输出的文本文件名
     save_image_paths_with_labels(base_directory, output_txt_file)
     print(f"图像路径和标注已保存到 {output_txt_file}")
