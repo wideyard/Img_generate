@@ -15,7 +15,7 @@ def save_image_paths_with_labels(base_directory, output_file):
                     # f.write(f"{image_path}\n")  # 写入图像路径和标注
 
 if __name__ == "__main__":
-    base_directory = "/llm/datasets/ChartGalaxy/source"
-    output_txt_file = "/llm/wyr/projects/any-text/chart_paths.txt"
+    base_directory = "ChartGalaxy/source"
+    output_txt_file = "chart_paths.txt"
     save_image_paths_with_labels(base_directory, output_txt_file)
     # print(f"wiki路径和长度已保存到 {output_txt_file}")
