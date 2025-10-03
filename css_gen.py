@@ -14,19 +14,19 @@ from tqdm import tqdm
 
 GEN_SUM = 10000
 # 配置目录
-chem_dir = "/llm/datasets/OCRSets/CASIA-CSDB"
-chem_dir_txt = "/llm/wyr/projects/any-text/image_paths_with_labels.txt"
-background_image_dir = '/llm/datasets/unsplash/unsplash_extracted/unsplash'
-wiki_dir = "/llm/wyr/projects/any-text/wiki"
-wiki_dir_txt = "/llm/wyr/projects/any-text/wiki_paths_with_length.txt"
-latex_image_dir = "/llm/datasets/OCRSets/im2latex/images"
-latex_json = "/llm/datasets/OCRSets/im2latex/im2latex.json"
-scores_dir = "/llm/wyr/projects/any-text/scores"
-scores_txt = "/llm/wyr/projects/any-text/scores_paths_with_length.txt"
-chart_txt = "/llm/wyr/projects/any-text/chart_paths.txt"
-chart_image_dir = "/llm/datasets/ChartGalaxy/source"
-chart_json = "/llm/datasets/ChartGalaxy/output/chart_caption_async/all_chart_captions.json"
-output_dir = "/llm/wyr/projects/any-text/output"
+chem_dir = "CASIA-CSDB"
+chem_dir_txt = "image_paths_with_labels.txt"
+background_image_dir = 'unsplash/unsplash_extracted/unsplash'
+wiki_dir = "any-text/wiki"
+wiki_dir_txt = "any-text/wiki_paths_with_length.txt"
+latex_image_dir = "OCRSets/im2latex/images"
+latex_json = "OCRSets/im2latex/im2latex.json"
+scores_dir = "any-text/scores"
+scores_txt = "any-text/scores_paths_with_length.txt"
+chart_txt = "any-text/chart_paths.txt"
+chart_image_dir = "ChartGalaxy/source"
+chart_json = "ChartGalaxy/output/chart_caption_async/all_chart_captions.json"
+output_dir = "any-text/output"
 MAX_LENGTH = 3600  # 最大尺寸限制
 
 # 文本布局基础参数（图像适应相关参数）
@@ -110,7 +110,7 @@ def gen_dot(type, dot_image_num):
             dot_str = gen_random_dot()
             src = Source(dot_str)
             src.format = "png"
-            path = f"/llm/wyr/projects/any-text/dots/dot_preview_{i}"
+            path = f"any-text/dots/dot_preview_{i}"
             path_texts.append({"path":path+".png", "text":dot_str, "type":type})
             src.render(filename=path, cleanup=True)
         except Exception as e:
@@ -839,7 +839,7 @@ img {{
 
 # 截图函数
 async def html_to_png(html_content, output_png="output.png", width=MAX_LENGTH, height=MAX_LENGTH):
-    with open("/llm/wyr/projects/any-text/index.html", "w") as f:
+    with open("any-text/index.html", "w") as f:
         f.write(html_content)
         
     async with async_playwright() as p:
