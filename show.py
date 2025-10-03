@@ -15,7 +15,7 @@ st.set_page_config(
 st.title("图像标签查看器")
 
 # 定义数据目录路径
-data_dir = "/llm/wyr/projects/any-text/output"
+data_dir = "any-text/output"
 json_file = os.path.join(data_dir, "output_labels.json")
 images_dir = os.path.join(data_dir, "images")
 
